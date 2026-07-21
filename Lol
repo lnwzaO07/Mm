@@ -18,8 +18,8 @@ local function setupPlayerMods(char)
     raycastParams.FilterDescendantsInstances = {char}
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 
-    -- [ สร้าง BodyVelocity ควบคุมการเดินและกันตก ]
-    local moveBv = Instance.new("BodyVelocity")
+    -- สร้าง BodyVelocity ล็อคการเคลื่อนที่และกันตก
+    local moveBv = hrp:FindFirstChild("MovementBV") or Instance.new("BodyVelocity")
     moveBv.Name = "MovementBV"
     moveBv.MaxForce = Vector3.new(0, 0, 0)
     moveBv.Velocity = Vector3.new(0, 0, 0)
@@ -32,11 +32,9 @@ local function setupPlayerMods(char)
             return
         end
 
-        -- ตรวจสอบว่า SeekMovingNewClone มีตัวตนอยู่ใน Workspace หรือไม่
+        -- เช็คว่ามี Seek อยู่ในแมพหรือไม่
         local seekInstance = Workspace:FindFirstChild("SeekMovingNewClone")
         local isSeekPresent = (seekInstance ~= nil and seekInstance.Parent ~= nil)
-        
-        -- ถ้าเจอ Seek วิ่ง 25 / ถ้า Seek หายไป จะกลับมาเป็น 20 ทันที
         local currentSpeed = isSeekPresent and 25 or 20
 
         -- 1. ยิงเลเซอร์ตรวจหาพื้นด้านล่าง (ระยะ 50 studs)
@@ -45,25 +43,25 @@ local function setupPlayerMods(char)
 
         if not downRay then
             -- ============================================
-            -- [ โหมดกันตก ] เมื่อทะลุแมพหรือร่วงลงเหว
+            -- [ โหมดกันตก ] เมื่ออยู่กลางอากาศหรือร่วงลงเหว
             -- ============================================
             local yVel = 0
             
-            -- ยิงเลเซอร์รอบตัวเช็คว่าเดินชนกำแพงหรือไม่
+            -- ยิงเลเซอร์เช็คว่าเดินชนกำแพง/ขอบแมพหรือไม่
             if humanoid.MoveDirection.Magnitude > 0 then
                 local wallRay = Workspace:Raycast(hrp.Position, humanoid.MoveDirection * 2.5, raycastParams)
                 if wallRay then
-                    -- ถ้าเดินชนกำแพง/ขอบแมพ ให้ลอยขึ้นฟ้าอัตโนมัติ
+                    -- ดันตัวละครลอยขึ้นฟ้าอัตโนมัติ (ไต่กำแพง)
                     yVel = currentSpeed
                 end
             end
             
-            -- ล็อคตัวละครไม่ให้ร่วงลงเหว + ดันขึ้นเมื่อชนกำแพง
+            -- ล็อคตัวละครไม่ให้ร่วงลงเหว + ไต่ขึ้นเมื่อชนกำแพง
             moveBv.MaxForce = Vector3.new(100000, 100000, 100000)
             moveBv.Velocity = Vector3.new(targetVel.X, yVel, targetVel.Z)
         else
             -- ============================================
-            -- [ โหมดเดินปกติ ] เมื่ออยู่บนพื้น
+            -- [ โหมดปกติ ] เมื่อยืนอยู่บนพื้น
             -- ============================================
             if humanoid.MoveDirection.Magnitude > 0 then
                 moveBv.MaxForce = Vector3.new(100000, 0, 100000)
@@ -83,7 +81,7 @@ LocalPlayer.CharacterAdded:Connect(setupPlayerMods)
 
 
 -- ====================================================================
--- ระบบที่ 2: DOORS ESP & Alert System (ไฮไลท์ทะลุกำแพงทุกชิ้น)
+-- ระบบที่ 2: DOORS ESP & Alert System (ครบทุกของและศัตรู)
 -- ====================================================================
 local COLOR_YELLOW = Color3.fromRGB(255, 255, 0)   
 local COLOR_GREEN  = Color3.fromRGB(0, 255, 100)   
@@ -94,20 +92,10 @@ local FONT_SIZE    = 14
 
 local currentDoorTarget = nil
 local latestRoomNum = -1       
-local targetRoomNum = -1       
 
-local activeKeys = {}
-local activeLevers = {}
-local activeBooks = {}
-local activePapers = {}
-local activeEnemies = {}
-local activeFuses = {}
-local activeMinesGens = {} 
-local activeBreakers = {} 
-local activeElecKeys = {} 
-
+local activeItems = {}
 local trackedHelpfulLights = {}
- 
+
 local alertText = Drawing.new("Text")
 alertText.Size = 28
 alertText.Font = FONT_STYLE
@@ -117,52 +105,23 @@ alertText.OutlineColor = Color3.fromRGB(0, 0, 0)
 alertText.Color = COLOR_RED
 alertText.Visible = false
 
-local enemyAlertCooldowns = {
-    ["Rush"] = 0,
-    ["Ambush"] = 0
-}
+local enemyAlertCooldowns = { ["Rush"] = 0, ["Ambush"] = 0 }
 local alertedEnemyInstances = setmetatable({}, {__mode = "k"})
 
-local cache = {
-    Door = { Text = Drawing.new("Text") },
-    Keys = {},
-    Levers = {},
-    Books = {},
-    Papers = {},
-    Enemies = {},
-    Fuses = {},
-    MinesGens = {},
-    Breakers = {}, 
-    ElecKeys = {}  
-}
+local textCache = {}
 
-cache.Door.Text.Size = FONT_SIZE
-cache.Door.Text.Font = FONT_STYLE
-cache.Door.Text.Center = true
-cache.Door.Text.Outline = true
-cache.Door.Text.OutlineColor = Color3.fromRGB(0, 0, 0)
-cache.Door.Text.Color = COLOR_YELLOW
-cache.Door.Text.Transparency = 1
-
-local function clearDrawingObj(objTable)
-    if objTable.Text then objTable.Text.Visible = false end
-end
-
-local function getDrawingObjects(pool, index, color, customSize)
-    if not pool[index] then
+local function getDrawingText(index)
+    if not textCache[index] then
         local text = Drawing.new("Text")
-        text.Size = customSize or FONT_SIZE
+        text.Size = FONT_SIZE
         text.Font = FONT_STYLE
         text.Center = true
         text.Outline = true
         text.OutlineColor = Color3.fromRGB(0, 0, 0)
-        text.Color = color
         text.Transparency = 1
-        pool[index] = { Text = text }
+        textCache[index] = text
     end
-    pool[index].Text.Color = color
-    if customSize then pool[index].Text.Size = customSize end
-    return pool[index]
+    return textCache[index]
 end
 
 local function getPrimaryPartOrFallback(object)
@@ -192,6 +151,7 @@ local function ensureHighlight(parentPart, hlName, color)
     end
 end
 
+-- สแกนหาไอเทมและศัตรูแบบ Real-time
 task.spawn(function()
     while true do
         local maxRoomNum = -1
@@ -201,25 +161,16 @@ task.spawn(function()
         end
         
         latestRoomNum = maxRoomNum
-        targetRoomNum = maxRoomNum - 1
-        
-        local targetRoom = CurrentRooms:FindFirstChild(tostring(targetRoomNum))
+        local targetRoom = CurrentRooms:FindFirstChild(tostring(maxRoomNum - 1)) or CurrentRooms:FindFirstChild(tostring(maxRoomNum))
         currentDoorTarget = targetRoom and findDoorPart(targetRoom)
         
         if currentDoorTarget then
             ensureHighlight(currentDoorTarget, "Door_ESP_Highlight", COLOR_YELLOW)
         end
         
-        local currentKeys = {}
-        local currentLevers = {}
-        local currentBooks = {}
-        local currentPapers = {}
-        local currentEnemies = {}
-        local currentFuses = {}
-        local currentMinesGens = {}
-        local currentBreakers = {}
-        local currentElecKeys = {}
+        local itemsFound = {}
         
+        -- ล้าง Tracker ของ HelpfulLight ที่หายไป
         for lightPart, sphere in pairs(trackedHelpfulLights) do
             if not lightPart or not lightPart.Parent then
                 if sphere and sphere.Parent then sphere:Destroy() end
@@ -228,44 +179,67 @@ task.spawn(function()
         end
         
         for _, room in ipairs(CurrentRooms:GetChildren()) do
+            -- ตรวจจับ MinesAnchor และ Grumbles ในห้อง 50 หรือที่มี _NestHandler
+            local nestHandler = room:FindFirstChild("_NestHandler")
+            if nestHandler then
+                -- 1. MinesAnchor (ไฮไลท์อย่างเดียว ไม่ขึ้นข้อความ)
+                local anchor = nestHandler:FindFirstChild("MinesAnchor")
+                if anchor then
+                    ensureHighlight(anchor, "Anchor_ESP_Highlight", COLOR_BLUE)
+                end
+                
+                -- 2. Grumbles (ศัตรู ไฮไลท์สีแดง + แสดงระยะ)
+                local grumblesFolder = nestHandler:FindFirstChild("Grumbles")
+                if grumblesFolder then
+                    for _, grumble in ipairs(grumblesFolder:GetChildren()) do
+                        local pPart = getPrimaryPartOrFallback(grumble)
+                        if pPart then
+                            table.insert(itemsFound, {Part = pPart, Color = COLOR_RED, Label = " GRUMBLE ", Inst = grumble})
+                            ensureHighlight(grumble, "Grumble_ESP_Highlight", COLOR_RED)
+                        end
+                    end
+                end
+            end
+
+            -- สแกนหาจุดต่างๆ ในห้องปกติ
             for _, desc in ipairs(room:GetDescendants()) do
                 
                 if desc.Name == "KeyHitbox" and desc:IsA("BasePart") then
-                    table.insert(currentKeys, desc)
+                    table.insert(itemsFound, {Part = desc, Color = COLOR_GREEN, Label = " KEY "})
                     ensureHighlight(desc, "Key_ESP_Highlight", COLOR_GREEN)
                     
                 elseif desc.Name == "LeverForGate" then
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart then 
-                        table.insert(currentLevers, validPart) 
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_GREEN, Label = " LEVER "})
                         ensureHighlight(validPart, "Lever_ESP_Highlight", COLOR_GREEN)
                     end
                     
                 elseif desc.Name == "FuseObtain" then 
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart then 
-                        table.insert(currentFuses, validPart) 
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_GREEN, Label = " FUSE "})
                         ensureHighlight(validPart, "Fuse_ESP_Highlight", COLOR_GREEN)
                     end
                     
                 elseif desc.Name == "MinesGenerator" then 
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart then 
-                        table.insert(currentMinesGens, validPart) 
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_YELLOW, Label = " MINES GENERATOR "})
                         ensureHighlight(validPart, "MinesGen_ESP_Highlight", COLOR_YELLOW)
                     end
                 
                 elseif desc.Name == "LiveBreakerPolePickup" then 
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart then 
-                        table.insert(currentBreakers, validPart) 
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_GREEN, Label = " BREAKER "})
                         ensureHighlight(validPart, "Breaker_ESP_Highlight", COLOR_GREEN)
                     end
                     
                 elseif desc.Name == "ElectricalKeyObtain" then 
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart then 
-                        table.insert(currentElecKeys, validPart) 
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_GREEN, Label = " ELECTRICAL KEY "})
                         ensureHighlight(validPart, "ElecKey_ESP_Highlight", COLOR_GREEN)
                     end
                 
@@ -297,98 +271,76 @@ task.spawn(function()
                         trackedHelpfulLights[validPart] = sphere
                     end
                     
-                elseif desc.Name == "LiveHintBook" then
-                    local basePart = desc:FindFirstChild("Base") or getPrimaryPartOrFallback(desc)
-                    if basePart and basePart:IsA("BasePart") then 
-                        table.insert(currentBooks, basePart) 
-                        ensureHighlight(basePart, "Book_ESP_Highlight", COLOR_BLUE)
-                    end
-                elseif desc.Name == "Base" and desc.Parent and desc.Parent.Name == "LiveHintBook" and desc:IsA("BasePart") then
-                    if not table.find(currentBooks, desc) then 
-                        table.insert(currentBooks, desc) 
-                        ensureHighlight(desc, "Book_ESP_Highlight", COLOR_BLUE)
+                elseif desc.Name == "LiveHintBook" or (desc.Name == "Base" and desc.Parent and desc.Parent.Name == "LiveHintBook") then
+                    local validPart = getPrimaryPartOrFallback(desc)
+                    if validPart and validPart:IsA("BasePart") then 
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_BLUE, Label = " BOOK "})
+                        ensureHighlight(validPart, "Book_ESP_Highlight", COLOR_BLUE)
                     end
                     
                 elseif desc.Name == "LibraryHintPaper" then
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart then 
-                        table.insert(currentPapers, validPart) 
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_BLUE, Label = " HINT PAPER "})
                         ensureHighlight(validPart, "Paper_ESP_Highlight", COLOR_BLUE)
                     end
                     
                 elseif desc.Name == "FigureRig" and desc:IsA("Model") then
                     local pPart = getPrimaryPartOrFallback(desc)
-                    if pPart then table.insert(currentEnemies, {Part = pPart, Name = "FIGURE", Inst = desc}) end
+                    if pPart then 
+                        table.insert(itemsFound, {Part = pPart, Color = COLOR_RED, Label = "FIGURE", Inst = desc}) 
+                    end
                 end
             end
         end
         
+        -- เช็คศัตรูระดับ Workspace
         local eyes = Workspace:FindFirstChild("Eyes")
         if eyes then
             local pPart = getPrimaryPartOrFallback(eyes)
-            if pPart then table.insert(currentEnemies, {Part = pPart, Name = "EYES", Inst = eyes}) end
+            if pPart then table.insert(itemsFound, {Part = pPart, Color = COLOR_RED, Label = "EYES", Inst = eyes}) end
         end
         
         local rush = Workspace:FindFirstChild("RushMoving")
         if rush then
             local pPart = getPrimaryPartOrFallback(rush)
-            if pPart then table.insert(currentEnemies, {Part = pPart, Name = "RUSH", Inst = rush}) end
+            if pPart then table.insert(itemsFound, {Part = pPart, Color = COLOR_RED, Label = "RUSH", Inst = rush}) end
         end
 
         local ambush = Workspace:FindFirstChild("AmbushMoving")
         if ambush then
             local pPart = getPrimaryPartOrFallback(ambush)
-            if pPart then table.insert(currentEnemies, {Part = pPart, Name = "AMBUSH", Inst = ambush}) end
+            if pPart then table.insert(itemsFound, {Part = pPart, Color = COLOR_RED, Label = "AMBUSH", Inst = ambush}) end
         end
         
         local currentTime = os.clock()
-        for _, enemy in ipairs(currentEnemies) do
-            local shortName = nil
-            if enemy.Name == "RUSH" then shortName = "Rush"
-            elseif enemy.Name == "AMBUSH" then shortName = "Ambush" end
-            
-            if shortName then
-                if not alertedEnemyInstances[enemy.Inst] then
-                    alertedEnemyInstances[enemy.Inst] = true 
+        for _, item in ipairs(itemsFound) do
+            if item.Label == "RUSH" or item.Label == "AMBUSH" then
+                local shortName = (item.Label == "RUSH") and "Rush" or "Ambush"
+                if not alertedEnemyInstances[item.Inst] then
+                    alertedEnemyInstances[item.Inst] = true 
                     enemyAlertCooldowns[shortName] = currentTime + 3 
                 end
             end
-
-            if enemy.Inst then
-                ensureHighlight(enemy.Inst, "EnemyESP_Highlight", COLOR_RED)
+            if item.Inst then
+                ensureHighlight(item.Inst, "EnemyESP_Highlight", COLOR_RED)
             end
         end
         
-        activeKeys = currentKeys
-        activeLevers = currentLevers
-        activeBooks = currentBooks
-        activePapers = currentPapers
-        activeEnemies = currentEnemies
-        activeFuses = currentFuses
-        activeMinesGens = currentMinesGens
-        activeBreakers = currentBreakers
-        activeElecKeys = currentElecKeys
-        
-        task.wait(0.5)
+        activeItems = itemsFound
+        task.wait(0.3)
     end
 end)
 
+-- วาดข้อความ ESP ลงหน้าจอ
 RunService.RenderStepped:Connect(function()
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    
-    clearDrawingObj(cache.Door)
-    for _, obj in pairs(cache.Keys) do clearDrawingObj(obj) end
-    for _, obj in pairs(cache.Levers) do clearDrawingObj(obj) end
-    for _, obj in pairs(cache.Books) do clearDrawingObj(obj) end
-    for _, obj in pairs(cache.Papers) do clearDrawingObj(obj) end
-    for _, obj in pairs(cache.Enemies) do clearDrawingObj(obj) end
-    for _, obj in pairs(cache.Fuses) do clearDrawingObj(obj) end
-    for _, obj in pairs(cache.MinesGens) do clearDrawingObj(obj) end
-    for _, obj in pairs(cache.Breakers) do clearDrawingObj(obj) end
-    for _, obj in pairs(cache.ElecKeys) do clearDrawingObj(obj) end
+    for _, textObj in pairs(textCache) do
+        textObj.Visible = false
+    end
     alertText.Visible = false
     
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     
     local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
@@ -404,53 +356,34 @@ RunService.RenderStepped:Connect(function()
         alertText.Visible = true
     end
     
-    local function renderESP(list, cacheList, color, label)
-        for idx, item in ipairs(list) do
-            if item and item.Parent then
-                local targetPos = item.Position
-                local vector, onScreen = Camera:WorldToViewportPoint(targetPos)
-                if onScreen then
-                    local dist = math.round((hrp.Position - targetPos).Magnitude)
-                    local drawingObj = getDrawingObjects(cacheList, idx, color)
-                    drawingObj.Text.Position = Vector2.new(vector.X, vector.Y - 25)
-                    drawingObj.Text.Text = string.format("[%s]\n%d studs", label, dist)
-                    drawingObj.Text.Visible = true
-                end
-            end
-        end
-    end
+    local drawIdx = 1
     
     if currentDoorTarget and currentDoorTarget.Parent then
         local targetPos = currentDoorTarget.Position
         local vector, onScreen = Camera:WorldToViewportPoint(targetPos)
         if onScreen then
             local dist = math.round((hrp.Position - targetPos).Magnitude)
-            cache.Door.Text.Position = Vector2.new(vector.X, vector.Y - 25)
-            cache.Door.Text.Text = string.format("[ DOOR %d ]\n%d studs", latestRoomNum, dist)
-            cache.Door.Text.Visible = true
+            local txt = getDrawingText(drawIdx)
+            txt.Position = Vector2.new(vector.X, vector.Y - 25)
+            txt.Text = string.format("[ DOOR %d ]\n%d studs", latestRoomNum, dist)
+            txt.Color = COLOR_YELLOW
+            txt.Visible = true
+            drawIdx = drawIdx + 1
         end
     end
     
-    renderESP(activeKeys, cache.Keys, COLOR_GREEN, " KEY ")
-    renderESP(activeMinesGens, cache.MinesGens, COLOR_YELLOW, " MINES GENERATOR ")
-    renderESP(activeFuses, cache.Fuses, COLOR_GREEN, " FUSE ")
-    renderESP(activeLevers, cache.Levers, COLOR_GREEN, " LEVER ")
-    renderESP(activeBooks, cache.Books, COLOR_BLUE, " BOOK ")
-    renderESP(activePapers, cache.Papers, COLOR_BLUE, " HINT PAPER ")
-    renderESP(activeBreakers, cache.Breakers, COLOR_GREEN, " BREAKER ")
-    renderESP(activeElecKeys, cache.ElecKeys, COLOR_GREEN, " ELECTRICAL KEY ")
-    
-    for idx, enemyData in ipairs(activeEnemies) do
-        local enemyPart = enemyData.Part
-        if enemyPart and enemyPart.Parent then
-            local targetPos = enemyPart.Position
+    for _, item in ipairs(activeItems) do
+        if item.Part and item.Part.Parent then
+            local targetPos = item.Part.Position
             local vector, onScreen = Camera:WorldToViewportPoint(targetPos)
             if onScreen then
                 local dist = math.round((hrp.Position - targetPos).Magnitude)
-                local drawingObj = getDrawingObjects(cache.Enemies, idx, COLOR_RED, 15)
-                drawingObj.Text.Position = Vector2.new(vector.X, vector.Y - 25)
-                drawingObj.Text.Text = string.format("[ %s ]\n%d studs", enemyData.Name, dist)
-                drawingObj.Text.Visible = true
+                local txt = getDrawingText(drawIdx)
+                txt.Position = Vector2.new(vector.X, vector.Y - 25)
+                txt.Text = string.format("[%s]\n%d studs", item.Label, dist)
+                txt.Color = item.Color
+                txt.Visible = true
+                drawIdx = drawIdx + 1
             end
         end
     end
