@@ -67,7 +67,7 @@ LocalPlayer.CharacterAdded:Connect(setupPlayerMods)
 
 
 -- ====================================================================
--- ระบบที่ 2: DOORS ESP & Alert System (ครบทุกของ, ศัตรู และไอเทมฟาร์ม)
+-- ระบบที่ 2: DOORS ESP & Alert System (ของแท้ดั้งเดิม + ไฮไลท์และข้อความครบทุกชิ้น)
 -- ====================================================================
 local COLOR_YELLOW = Color3.fromRGB(255, 255, 0)   
 local COLOR_GREEN  = Color3.fromRGB(0, 255, 100)   
@@ -137,20 +137,6 @@ local function ensureHighlight(parentPart, hlName, color)
     end
 end
 
--- หมวดหมู่ไอเทมฟาร์มทั่วไป
-local lootItems = {
-    ["GoldPile"] = {Color = Color3.fromRGB(255, 215, 0), Label = " GOLD "},
-    ["Lighter"] = {Color = Color3.fromRGB(255, 150, 0), Label = " LIGHTER "},
-    ["Flashlight"] = {Color = Color3.fromRGB(200, 200, 200), Label = " FLASHLIGHT "},
-    ["Vitamins"] = {Color = Color3.fromRGB(255, 100, 100), Label = " VITAMINS "},
-    ["Crucifix"] = {Color = Color3.fromRGB(150, 200, 255), Label = " CRUCIFIX "},
-    ["Lockpick"] = {Color = Color3.fromRGB(150, 150, 150), Label = " LOCKPICK "},
-    ["SkeletonKey"] = {Color = Color3.fromRGB(200, 100, 200), Label = " SKELETON KEY "},
-    ["Bandage"] = {Color = Color3.fromRGB(0, 255, 100), Label = " BANDAGE "},
-    ["Battery"] = {Color = Color3.fromRGB(0, 150, 255), Label = " BATTERY "},
-    ["Shears"] = {Color = Color3.fromRGB(200, 200, 200), Label = " SHEARS "}
-}
-
 -- สแกนหาไอเทมและศัตรูแบบ Real-time
 task.spawn(function()
     while true do
@@ -170,6 +156,7 @@ task.spawn(function()
         
         local itemsFound = {}
         
+        -- ล้าง Tracker ของ HelpfulLight ที่หายไป
         for lightPart, sphere in pairs(trackedHelpfulLights) do
             if not lightPart or not lightPart.Parent then
                 if sphere and sphere.Parent then sphere:Destroy() end
@@ -180,11 +167,14 @@ task.spawn(function()
         for _, room in ipairs(CurrentRooms:GetChildren()) do
             local nestHandler = room:FindFirstChild("_NestHandler")
             if nestHandler then
+                -- 1. MinesAnchor (มีข้อความและไฮไลท์สีฟ้า)
                 local anchor = nestHandler:FindFirstChild("MinesAnchor")
                 if anchor then
+                    table.insert(itemsFound, {Part = anchor, Color = COLOR_BLUE, Label = " MINES ANCHOR "})
                     ensureHighlight(anchor, "Anchor_ESP_Highlight", COLOR_BLUE)
                 end
                 
+                -- 2. Grumbles (มีข้อความและไฮไลท์สีแดง)
                 local grumblesFolder = nestHandler:FindFirstChild("Grumbles")
                 if grumblesFolder then
                     for _, grumble in ipairs(grumblesFolder:GetChildren()) do
@@ -197,17 +187,10 @@ task.spawn(function()
                 end
             end
 
+            -- สแกนหาจุดต่างๆ ในห้องปกติ
             for _, desc in ipairs(room:GetDescendants()) do
-                local lootInfo = lootItems[desc.Name]
                 
-                if lootInfo then
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then
-                        table.insert(itemsFound, {Part = validPart, Color = lootInfo.Color, Label = lootInfo.Label})
-                        ensureHighlight(validPart, desc.Name.."_ESP_Highlight", lootInfo.Color)
-                    end
-                    
-                elseif desc.Name == "KeyHitbox" and desc:IsA("BasePart") then
+                if desc.Name == "KeyHitbox" and desc:IsA("BasePart") then
                     table.insert(itemsFound, {Part = desc, Color = COLOR_GREEN, Label = " KEY "})
                     ensureHighlight(desc, "Key_ESP_Highlight", COLOR_GREEN)
                     
@@ -246,32 +229,46 @@ task.spawn(function()
                         ensureHighlight(validPart, "ElecKey_ESP_Highlight", COLOR_GREEN)
                     end
                 
+                -- 3. GloomPile (มีข้อความและไฮไลท์สีแดง)
                 elseif desc.Name == "GloomPile" then 
-                    ensureHighlight(desc, "GloomRedHighlight", COLOR_RED)
+                    local validPart = getPrimaryPartOrFallback(desc)
+                    if validPart then
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_RED, Label = " GLOOM "})
+                        ensureHighlight(desc, "GloomRedHighlight", COLOR_RED)
+                    end
                     
+                -- 4. Giggle (มีข้อความและไฮไลท์สีแดง)
                 elseif desc.Name == "GiggleCeiling" then
-                    ensureHighlight(desc, "GiggleRedHighlight", COLOR_RED)
+                    local validPart = getPrimaryPartOrFallback(desc)
+                    if validPart then
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_RED, Label = " GIGGLE "})
+                        ensureHighlight(desc, "GiggleRedHighlight", COLOR_RED)
+                    end
                     
+                -- 5. HelpfulLight (มีข้อความและไฮไลท์สีฟ้า)
                 elseif desc.Name == "HelpfulLight" then
                     local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart and not trackedHelpfulLights[validPart] then
-                        local sphere = Instance.new("Part")
-                        sphere.Name = "LightTrackerSphere"
-                        sphere.Shape = Enum.PartType.Ball
-                        sphere.Size = Vector3.new(2, 2, 2)
-                        sphere.Color = COLOR_BLUE
-                        sphere.Material = Enum.Material.Neon
-                        sphere.CanCollide = false
-                        sphere.Massless = true
-                        sphere.Anchored = false
-                        sphere.CFrame = validPart.CFrame
-                        local weld = Instance.new("WeldConstraint")
-                        weld.Part0 = sphere
-                        weld.Part1 = validPart
-                        weld.Parent = sphere
-                        ensureHighlight(sphere, "SphereHighlight", sphere.Color)
-                        sphere.Parent = Workspace
-                        trackedHelpfulLights[validPart] = sphere
+                    if validPart then
+                        table.insert(itemsFound, {Part = validPart, Color = COLOR_BLUE, Label = " HELPFUL LIGHT "})
+                        if not trackedHelpfulLights[validPart] then
+                            local sphere = Instance.new("Part")
+                            sphere.Name = "LightTrackerSphere"
+                            sphere.Shape = Enum.PartType.Ball
+                            sphere.Size = Vector3.new(2, 2, 2)
+                            sphere.Color = COLOR_BLUE
+                            sphere.Material = Enum.Material.Neon
+                            sphere.CanCollide = false
+                            sphere.Massless = true
+                            sphere.Anchored = false
+                            sphere.CFrame = validPart.CFrame
+                            local weld = Instance.new("WeldConstraint")
+                            weld.Part0 = sphere
+                            weld.Part1 = validPart
+                            weld.Parent = sphere
+                            ensureHighlight(sphere, "SphereHighlight", sphere.Color)
+                            sphere.Parent = Workspace
+                            trackedHelpfulLights[validPart] = sphere
+                        end
                     end
                     
                 elseif desc.Name == "LiveHintBook" or (desc.Name == "Base" and desc.Parent and desc.Parent.Name == "LiveHintBook") then
@@ -297,6 +294,7 @@ task.spawn(function()
             end
         end
         
+        -- เช็คศัตรูระดับ Workspace (Eyes, Rush, Ambush)
         local eyes = Workspace:FindFirstChild("Eyes")
         if eyes then
             local pPart = getPrimaryPartOrFallback(eyes)
@@ -315,6 +313,7 @@ task.spawn(function()
             if pPart then table.insert(itemsFound, {Part = pPart, Color = COLOR_RED, Label = "AMBUSH", Inst = ambush}) end
         end
         
+        -- จัดการแจ้งเตือนและการใส่ไฮไลท์ศัตรู
         local currentTime = os.clock()
         for _, item in ipairs(itemsFound) do
             if item.Label == "RUSH" or item.Label == "AMBUSH" then
@@ -334,6 +333,7 @@ task.spawn(function()
     end
 end)
 
+-- วาดข้อความ ESP ลงหน้าจอ
 RunService.RenderStepped:Connect(function()
     for _, textObj in pairs(textCache) do
         textObj.Visible = false
@@ -359,6 +359,7 @@ RunService.RenderStepped:Connect(function()
     
     local drawIdx = 1
     
+    -- ข้อความ ESP สำหรับประตู
     if currentDoorTarget and currentDoorTarget.Parent then
         local targetPos = currentDoorTarget.Position
         local vector, onScreen = Camera:WorldToViewportPoint(targetPos)
@@ -373,6 +374,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
     
+    -- ข้อความ ESP สำหรับของทุกชนิดใน itemsFound
     for _, item in ipairs(activeItems) do
         if item.Part and item.Part.Parent then
             local targetPos = item.Part.Position
