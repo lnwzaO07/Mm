@@ -7,7 +7,7 @@ local Camera = Workspace.CurrentCamera
 local CurrentRooms = Workspace:WaitForChild("CurrentRooms")
 
 -- ====================================================================
--- ระบบที่ 1: Player Modifiers (กันตกไต่กำแพง + สลับวิ่งเร็ว 20 / 25 ตอนเจอ Seek)
+-- ระบบที่ 1: Player Modifiers (กันตกยิง Ray -15 + สลับวิ่งเร็ว 20 / 25)
 -- ====================================================================
 local function setupPlayerMods(char)
     local hrp = char:WaitForChild("HumanoidRootPart", 5)
@@ -35,20 +35,24 @@ local function setupPlayerMods(char)
         local isSeekPresent = (seekInstance ~= nil and seekInstance.Parent ~= nil)
         local currentSpeed = isSeekPresent and 25 or 20
 
-        local downRay = Workspace:Raycast(hrp.Position, Vector3.new(0, -50, 0), raycastParams)
+        -- แก้ไข: ยิง Ray ลงล่างแค่ 15 studs ตามที่ต้องการ
+        local downRay = Workspace:Raycast(hrp.Position, Vector3.new(0, -15, 0), raycastParams)
         local targetVel = humanoid.MoveDirection * currentSpeed
 
         if not downRay then
+            -- ถ้าไม่มีพื้นในระยะ -15 studs (กำลังจะตก/ตกขอบ)
             local yVel = 0
             if humanoid.MoveDirection.Magnitude > 0 then
-                local wallRay = Workspace:Raycast(hrp.Position, humanoid.MoveDirection * 2.5, raycastParams)
+                local wallRay = Workspace:Raycast(hrp.Position, humanoid.MoveDirection * 3, raycastParams)
                 if wallRay then
-                    yVel = currentSpeed
+                    yVel = currentSpeed -- ไต่ขึ้นเมื่อชนกำแพง/ขอบ
                 end
             end
+            -- ล็อคพยุงตัวไม่ให้ตก
             moveBv.MaxForce = Vector3.new(100000, 100000, 100000)
             moveBv.Velocity = Vector3.new(targetVel.X, yVel, targetVel.Z)
         else
+            -- ถ้ามีพื้นปกติ ปิดการพยุงตัว
             if humanoid.MoveDirection.Magnitude > 0 then
                 moveBv.MaxForce = Vector3.new(100000, 0, 100000)
                 moveBv.Velocity = targetVel
@@ -67,7 +71,7 @@ LocalPlayer.CharacterAdded:Connect(setupPlayerMods)
 
 
 -- ====================================================================
--- ระบบที่ 2: DOORS ESP & Alert System (ของแท้ดั้งเดิม + ไฮไลท์และข้อความครบทุกชิ้น)
+-- ระบบที่ 2: DOORS ESP & Alert System (ไฮไลท์ + ข้อความครบ 100%)
 -- ====================================================================
 local COLOR_YELLOW = Color3.fromRGB(255, 255, 0)   
 local COLOR_GREEN  = Color3.fromRGB(0, 255, 100)   
@@ -156,7 +160,6 @@ task.spawn(function()
         
         local itemsFound = {}
         
-        -- ล้าง Tracker ของ HelpfulLight ที่หายไป
         for lightPart, sphere in pairs(trackedHelpfulLights) do
             if not lightPart or not lightPart.Parent then
                 if sphere and sphere.Parent then sphere:Destroy() end
@@ -167,14 +170,12 @@ task.spawn(function()
         for _, room in ipairs(CurrentRooms:GetChildren()) do
             local nestHandler = room:FindFirstChild("_NestHandler")
             if nestHandler then
-                -- 1. MinesAnchor (มีข้อความและไฮไลท์สีฟ้า)
                 local anchor = nestHandler:FindFirstChild("MinesAnchor")
                 if anchor then
                     table.insert(itemsFound, {Part = anchor, Color = COLOR_BLUE, Label = " MINES ANCHOR "})
                     ensureHighlight(anchor, "Anchor_ESP_Highlight", COLOR_BLUE)
                 end
                 
-                -- 2. Grumbles (มีข้อความและไฮไลท์สีแดง)
                 local grumblesFolder = nestHandler:FindFirstChild("Grumbles")
                 if grumblesFolder then
                     for _, grumble in ipairs(grumblesFolder:GetChildren()) do
@@ -187,9 +188,7 @@ task.spawn(function()
                 end
             end
 
-            -- สแกนหาจุดต่างๆ ในห้องปกติ
             for _, desc in ipairs(room:GetDescendants()) do
-                
                 if desc.Name == "KeyHitbox" and desc:IsA("BasePart") then
                     table.insert(itemsFound, {Part = desc, Color = COLOR_GREEN, Label = " KEY "})
                     ensureHighlight(desc, "Key_ESP_Highlight", COLOR_GREEN)
@@ -229,7 +228,6 @@ task.spawn(function()
                         ensureHighlight(validPart, "ElecKey_ESP_Highlight", COLOR_GREEN)
                     end
                 
-                -- 3. GloomPile (มีข้อความและไฮไลท์สีแดง)
                 elseif desc.Name == "GloomPile" then 
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart then
@@ -237,7 +235,6 @@ task.spawn(function()
                         ensureHighlight(desc, "GloomRedHighlight", COLOR_RED)
                     end
                     
-                -- 4. Giggle (มีข้อความและไฮไลท์สีแดง)
                 elseif desc.Name == "GiggleCeiling" then
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart then
@@ -245,7 +242,6 @@ task.spawn(function()
                         ensureHighlight(desc, "GiggleRedHighlight", COLOR_RED)
                     end
                     
-                -- 5. HelpfulLight (มีข้อความและไฮไลท์สีฟ้า)
                 elseif desc.Name == "HelpfulLight" then
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart then
@@ -294,7 +290,6 @@ task.spawn(function()
             end
         end
         
-        -- เช็คศัตรูระดับ Workspace (Eyes, Rush, Ambush)
         local eyes = Workspace:FindFirstChild("Eyes")
         if eyes then
             local pPart = getPrimaryPartOrFallback(eyes)
@@ -313,7 +308,6 @@ task.spawn(function()
             if pPart then table.insert(itemsFound, {Part = pPart, Color = COLOR_RED, Label = "AMBUSH", Inst = ambush}) end
         end
         
-        -- จัดการแจ้งเตือนและการใส่ไฮไลท์ศัตรู
         local currentTime = os.clock()
         for _, item in ipairs(itemsFound) do
             if item.Label == "RUSH" or item.Label == "AMBUSH" then
@@ -359,7 +353,6 @@ RunService.RenderStepped:Connect(function()
     
     local drawIdx = 1
     
-    -- ข้อความ ESP สำหรับประตู
     if currentDoorTarget and currentDoorTarget.Parent then
         local targetPos = currentDoorTarget.Position
         local vector, onScreen = Camera:WorldToViewportPoint(targetPos)
@@ -374,7 +367,6 @@ RunService.RenderStepped:Connect(function()
         end
     end
     
-    -- ข้อความ ESP สำหรับของทุกชนิดใน itemsFound
     for _, item in ipairs(activeItems) do
         if item.Part and item.Part.Parent then
             local targetPos = item.Part.Position
