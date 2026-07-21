@@ -18,7 +18,6 @@ local function setupPlayerMods(char)
     raycastParams.FilterDescendantsInstances = {char}
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 
-    -- สร้าง BodyVelocity ล็อคการเคลื่อนที่และกันตก
     local moveBv = hrp:FindFirstChild("MovementBV") or Instance.new("BodyVelocity")
     moveBv.Name = "MovementBV"
     moveBv.MaxForce = Vector3.new(0, 0, 0)
@@ -32,37 +31,24 @@ local function setupPlayerMods(char)
             return
         end
 
-        -- เช็คว่ามี Seek อยู่ในแมพหรือไม่
         local seekInstance = Workspace:FindFirstChild("SeekMovingNewClone")
         local isSeekPresent = (seekInstance ~= nil and seekInstance.Parent ~= nil)
         local currentSpeed = isSeekPresent and 25 or 20
 
-        -- 1. ยิงเลเซอร์ตรวจหาพื้นด้านล่าง (ระยะ 50 studs)
         local downRay = Workspace:Raycast(hrp.Position, Vector3.new(0, -50, 0), raycastParams)
         local targetVel = humanoid.MoveDirection * currentSpeed
 
         if not downRay then
-            -- ============================================
-            -- [ โหมดกันตก ] เมื่ออยู่กลางอากาศหรือร่วงลงเหว
-            -- ============================================
             local yVel = 0
-            
-            -- ยิงเลเซอร์เช็คว่าเดินชนกำแพง/ขอบแมพหรือไม่
             if humanoid.MoveDirection.Magnitude > 0 then
                 local wallRay = Workspace:Raycast(hrp.Position, humanoid.MoveDirection * 2.5, raycastParams)
                 if wallRay then
-                    -- ดันตัวละครลอยขึ้นฟ้าอัตโนมัติ (ไต่กำแพง)
                     yVel = currentSpeed
                 end
             end
-            
-            -- ล็อคตัวละครไม่ให้ร่วงลงเหว + ไต่ขึ้นเมื่อชนกำแพง
             moveBv.MaxForce = Vector3.new(100000, 100000, 100000)
             moveBv.Velocity = Vector3.new(targetVel.X, yVel, targetVel.Z)
         else
-            -- ============================================
-            -- [ โหมดปกติ ] เมื่อยืนอยู่บนพื้น
-            -- ============================================
             if humanoid.MoveDirection.Magnitude > 0 then
                 moveBv.MaxForce = Vector3.new(100000, 0, 100000)
                 moveBv.Velocity = targetVel
@@ -81,7 +67,7 @@ LocalPlayer.CharacterAdded:Connect(setupPlayerMods)
 
 
 -- ====================================================================
--- ระบบที่ 2: DOORS ESP & Alert System (ครบทุกของและศัตรู)
+-- ระบบที่ 2: DOORS ESP & Alert System (ครบทุกของ, ศัตรู และไอเทมฟาร์ม)
 -- ====================================================================
 local COLOR_YELLOW = Color3.fromRGB(255, 255, 0)   
 local COLOR_GREEN  = Color3.fromRGB(0, 255, 100)   
@@ -151,6 +137,20 @@ local function ensureHighlight(parentPart, hlName, color)
     end
 end
 
+-- หมวดหมู่ไอเทมฟาร์มทั่วไป
+local lootItems = {
+    ["GoldPile"] = {Color = Color3.fromRGB(255, 215, 0), Label = " GOLD "},
+    ["Lighter"] = {Color = Color3.fromRGB(255, 150, 0), Label = " LIGHTER "},
+    ["Flashlight"] = {Color = Color3.fromRGB(200, 200, 200), Label = " FLASHLIGHT "},
+    ["Vitamins"] = {Color = Color3.fromRGB(255, 100, 100), Label = " VITAMINS "},
+    ["Crucifix"] = {Color = Color3.fromRGB(150, 200, 255), Label = " CRUCIFIX "},
+    ["Lockpick"] = {Color = Color3.fromRGB(150, 150, 150), Label = " LOCKPICK "},
+    ["SkeletonKey"] = {Color = Color3.fromRGB(200, 100, 200), Label = " SKELETON KEY "},
+    ["Bandage"] = {Color = Color3.fromRGB(0, 255, 100), Label = " BANDAGE "},
+    ["Battery"] = {Color = Color3.fromRGB(0, 150, 255), Label = " BATTERY "},
+    ["Shears"] = {Color = Color3.fromRGB(200, 200, 200), Label = " SHEARS "}
+}
+
 -- สแกนหาไอเทมและศัตรูแบบ Real-time
 task.spawn(function()
     while true do
@@ -170,7 +170,6 @@ task.spawn(function()
         
         local itemsFound = {}
         
-        -- ล้าง Tracker ของ HelpfulLight ที่หายไป
         for lightPart, sphere in pairs(trackedHelpfulLights) do
             if not lightPart or not lightPart.Parent then
                 if sphere and sphere.Parent then sphere:Destroy() end
@@ -179,16 +178,13 @@ task.spawn(function()
         end
         
         for _, room in ipairs(CurrentRooms:GetChildren()) do
-            -- [ ส่วนของใหม่ ] ตรวจจับ MinesAnchor และ Grumbles ในห้อง 50 หรือที่มี _NestHandler
             local nestHandler = room:FindFirstChild("_NestHandler")
             if nestHandler then
-                -- 1. MinesAnchor (ไฮไลท์อย่างเดียว ไม่ขึ้นข้อความ)
                 local anchor = nestHandler:FindFirstChild("MinesAnchor")
                 if anchor then
                     ensureHighlight(anchor, "Anchor_ESP_Highlight", COLOR_BLUE)
                 end
                 
-                -- 2. Grumbles (ศัตรู ไฮไลท์สีแดง + แสดงระยะทาง)
                 local grumblesFolder = nestHandler:FindFirstChild("Grumbles")
                 if grumblesFolder then
                     for _, grumble in ipairs(grumblesFolder:GetChildren()) do
@@ -201,10 +197,17 @@ task.spawn(function()
                 end
             end
 
-            -- สแกนหาจุดต่างๆ ในห้องปกติ
             for _, desc in ipairs(room:GetDescendants()) do
+                local lootInfo = lootItems[desc.Name]
                 
-                if desc.Name == "KeyHitbox" and desc:IsA("BasePart") then
+                if lootInfo then
+                    local validPart = getPrimaryPartOrFallback(desc)
+                    if validPart then
+                        table.insert(itemsFound, {Part = validPart, Color = lootInfo.Color, Label = lootInfo.Label})
+                        ensureHighlight(validPart, desc.Name.."_ESP_Highlight", lootInfo.Color)
+                    end
+                    
+                elseif desc.Name == "KeyHitbox" and desc:IsA("BasePart") then
                     table.insert(itemsFound, {Part = desc, Color = COLOR_GREEN, Label = " KEY "})
                     ensureHighlight(desc, "Key_ESP_Highlight", COLOR_GREEN)
                     
@@ -294,7 +297,6 @@ task.spawn(function()
             end
         end
         
-        -- เช็คศัตรูระดับ Workspace
         local eyes = Workspace:FindFirstChild("Eyes")
         if eyes then
             local pPart = getPrimaryPartOrFallback(eyes)
@@ -332,7 +334,6 @@ task.spawn(function()
     end
 end)
 
--- วาดข้อความ ESP ลงหน้าจอ
 RunService.RenderStepped:Connect(function()
     for _, textObj in pairs(textCache) do
         textObj.Visible = false
