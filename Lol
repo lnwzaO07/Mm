@@ -7,22 +7,23 @@ local Camera = Workspace.CurrentCamera
 local CurrentRooms = Workspace:WaitForChild("CurrentRooms")
 
 -- ====================================================================
--- ระบบที่ 1: Auto Anti-Fall (ป้องกันการตกแมพ)
+-- ระบบที่ 1: Player Modifiers (กันตกไต่กำแพง + สลับวิ่งเร็ว 20 / 25 ตอนเจอ Seek)
 -- ====================================================================
-local function setupAutoAntiFall(char)
+local function setupPlayerMods(char)
     local hrp = char:WaitForChild("HumanoidRootPart", 5)
     local humanoid = char:WaitForChild("Humanoid", 5)
     if not hrp or not humanoid then return end
 
-    local bv = Instance.new("BodyVelocity")
-    bv.Name = "AutoAntiFallBV"
-    bv.MaxForce = Vector3.new(0, 0, 0)
-    bv.Velocity = Vector3.new(0, 0, 0)
-    bv.Parent = hrp
-
     local raycastParams = RaycastParams.new()
     raycastParams.FilterDescendantsInstances = {char}
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+    -- [ สร้าง BodyVelocity ควบคุมการเดินและกันตก ]
+    local moveBv = Instance.new("BodyVelocity")
+    moveBv.Name = "MovementBV"
+    moveBv.MaxForce = Vector3.new(0, 0, 0)
+    moveBv.Velocity = Vector3.new(0, 0, 0)
+    moveBv.Parent = hrp
 
     local connection
     connection = RunService.Heartbeat:Connect(function()
@@ -31,31 +32,60 @@ local function setupAutoAntiFall(char)
             return
         end
 
-        local rayDirection = Vector3.new(0, -15, 0)
-        local rayResult = Workspace:Raycast(hrp.Position, rayDirection, raycastParams)
+        -- ตรวจสอบว่าเจอ SeekMovingNewClone ใน Workspace หรือไม่
+        local isSeekPresent = Workspace:FindFirstChild("SeekMovingNewClone") ~= nil
+        
+        -- ถ้าเจอ Seek วิ่ง 25, ถ้าไม่เจอวิ่งความเร็วปกติ 20
+        local currentSpeed = isSeekPresent and 25 or 20
 
-        if not rayResult then
-            bv.MaxForce = Vector3.new(0, math.huge, 0)
-            local currentVel = hrp.AssemblyLinearVelocity
-            hrp.AssemblyLinearVelocity = Vector3.new(currentVel.X, 0, currentVel.Z)
+        -- 1. ยิงเลเซอร์ตรวจหาพื้นด้านล่าง (ระยะ 50 studs)
+        local downRay = Workspace:Raycast(hrp.Position, Vector3.new(0, -50, 0), raycastParams)
+        local targetVel = humanoid.MoveDirection * currentSpeed
+
+        if not downRay then
+            -- ============================================
+            -- [ โหมดกันตก ] เมื่อทะลุแมพหรือร่วงลงเหว
+            -- ============================================
+            local yVel = 0
+            
+            -- ยิงเลเซอร์รอบตัวเช็คว่าเดินชนกำแพงหรือไม่
+            if humanoid.MoveDirection.Magnitude > 0 then
+                local wallRay = Workspace:Raycast(hrp.Position, humanoid.MoveDirection * 2.5, raycastParams)
+                if wallRay then
+                    -- ถ้าเดินชนกำแพง/ขอบแมพ ให้ลอยขึ้นฟ้าอัตโนมัติ
+                    yVel = currentSpeed
+                end
+            end
+            
+            -- ล็อคตัวละครไม่ให้ร่วงลงเหว + ดันขึ้นเมื่อชนกำแพง
+            moveBv.MaxForce = Vector3.new(100000, 100000, 100000)
+            moveBv.Velocity = Vector3.new(targetVel.X, yVel, targetVel.Z)
         else
-            bv.MaxForce = Vector3.new(0, 0, 0)
+            -- ============================================
+            -- [ โหมดเดินปกติ ] เมื่ออยู่บนพื้น
+            -- ============================================
+            if humanoid.MoveDirection.Magnitude > 0 then
+                moveBv.MaxForce = Vector3.new(100000, 0, 100000)
+                moveBv.Velocity = targetVel
+            else
+                moveBv.MaxForce = Vector3.new(0, 0, 0)
+                moveBv.Velocity = Vector3.new(0, 0, 0)
+            end
         end
     end)
 end
 
 if LocalPlayer.Character then
-    setupAutoAntiFall(LocalPlayer.Character)
+    setupPlayerMods(LocalPlayer.Character)
 end
-LocalPlayer.CharacterAdded:Connect(setupAutoAntiFall)
+LocalPlayer.CharacterAdded:Connect(setupPlayerMods)
 
 
 -- ====================================================================
--- ระบบที่ 2: DOORS ESP & Alert System
+-- ระบบที่ 2: DOORS ESP & Alert System (ไฮไลท์ทะลุกำแพงทุกชิ้น)
 -- ====================================================================
--- [Color & Font Configuration]
 local COLOR_YELLOW = Color3.fromRGB(255, 255, 0)   
-local COLOR_GREEN  = Color3.fromRGB(0, 255, 100)   -- กุญแจ / คันโยก / ฟิวส์ / Breaker / กุญแจไฟฟ้า
+local COLOR_GREEN  = Color3.fromRGB(0, 255, 100)   
 local COLOR_BLUE   = Color3.fromRGB(0, 200, 255)   
 local COLOR_RED    = Color3.fromRGB(255, 0, 50)    
 local FONT_STYLE   = 3                             
@@ -72,8 +102,8 @@ local activePapers = {}
 local activeEnemies = {}
 local activeFuses = {}
 local activeMinesGens = {} 
-local activeBreakers = {} -- [เพิ่มใหม่] Breaker 
-local activeElecKeys = {} -- [เพิ่มใหม่] กุญแจไฟฟ้า
+local activeBreakers = {} 
+local activeElecKeys = {} 
 
 local trackedHelpfulLights = {}
  
@@ -101,8 +131,8 @@ local cache = {
     Enemies = {},
     Fuses = {},
     MinesGens = {},
-    Breakers = {}, -- แคชสำหรับ Breaker
-    ElecKeys = {}  -- แคชสำหรับ กุญแจไฟฟ้า
+    Breakers = {}, 
+    ElecKeys = {}  
 }
 
 cache.Door.Text.Size = FONT_SIZE
@@ -127,7 +157,6 @@ local function getDrawingObjects(pool, index, color, customSize)
         text.OutlineColor = Color3.fromRGB(0, 0, 0)
         text.Color = color
         text.Transparency = 1
-        
         pool[index] = { Text = text }
     end
     pool[index].Text.Color = color
@@ -149,7 +178,19 @@ local function findDoorPart(room)
     return getPrimaryPartOrFallback(doorObj) or room:FindFirstChildWhichIsA("BasePart", true)
 end
 
--- สแกนโครงสร้างแมพและจัดการไอเทม/ศัตรู
+local function ensureHighlight(parentPart, hlName, color)
+    if not parentPart then return end
+    if not parentPart:FindFirstChild(hlName) then
+        local hl = Instance.new("Highlight")
+        hl.Name = hlName
+        hl.FillColor = color
+        hl.FillTransparency = 0.5
+        hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Parent = parentPart
+    end
+end
+
 task.spawn(function()
     while true do
         local maxRoomNum = -1
@@ -163,6 +204,10 @@ task.spawn(function()
         
         local targetRoom = CurrentRooms:FindFirstChild(tostring(targetRoomNum))
         currentDoorTarget = targetRoom and findDoorPart(targetRoom)
+        
+        if currentDoorTarget then
+            ensureHighlight(currentDoorTarget, "Door_ESP_Highlight", COLOR_YELLOW)
+        end
         
         local currentKeys = {}
         local currentLevers = {}
@@ -183,46 +228,52 @@ task.spawn(function()
         
         for _, room in ipairs(CurrentRooms:GetChildren()) do
             for _, desc in ipairs(room:GetDescendants()) do
+                
                 if desc.Name == "KeyHitbox" and desc:IsA("BasePart") then
                     table.insert(currentKeys, desc)
+                    ensureHighlight(desc, "Key_ESP_Highlight", COLOR_GREEN)
+                    
                 elseif desc.Name == "LeverForGate" then
                     local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then table.insert(currentLevers, validPart) end
+                    if validPart then 
+                        table.insert(currentLevers, validPart) 
+                        ensureHighlight(validPart, "Lever_ESP_Highlight", COLOR_GREEN)
+                    end
+                    
                 elseif desc.Name == "FuseObtain" then 
                     local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then table.insert(currentFuses, validPart) end
+                    if validPart then 
+                        table.insert(currentFuses, validPart) 
+                        ensureHighlight(validPart, "Fuse_ESP_Highlight", COLOR_GREEN)
+                    end
+                    
                 elseif desc.Name == "MinesGenerator" then 
                     local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then table.insert(currentMinesGens, validPart) end
+                    if validPart then 
+                        table.insert(currentMinesGens, validPart) 
+                        ensureHighlight(validPart, "MinesGen_ESP_Highlight", COLOR_YELLOW)
+                    end
                 
-                -- [เพิ่มใหม่] สวิตช์เบรกเกอร์ ห้อง 100
                 elseif desc.Name == "LiveBreakerPolePickup" then 
                     local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then table.insert(currentBreakers, validPart) end
-                -- [เพิ่มใหม่] กุญแจห้องไฟฟ้า ห้อง 100
+                    if validPart then 
+                        table.insert(currentBreakers, validPart) 
+                        ensureHighlight(validPart, "Breaker_ESP_Highlight", COLOR_GREEN)
+                    end
+                    
                 elseif desc.Name == "ElectricalKeyObtain" then 
                     local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then table.insert(currentElecKeys, validPart) end
+                    if validPart then 
+                        table.insert(currentElecKeys, validPart) 
+                        ensureHighlight(validPart, "ElecKey_ESP_Highlight", COLOR_GREEN)
+                    end
                 
                 elseif desc.Name == "GloomPile" then 
-                    if not desc:FindFirstChild("GloomRedHighlight") then
-                        local highlight = Instance.new("Highlight")
-                        highlight.Name = "GloomRedHighlight"
-                        highlight.FillColor = COLOR_RED
-                        highlight.FillTransparency = 0.5
-                        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                        highlight.Parent = desc
-                    end
+                    ensureHighlight(desc, "GloomRedHighlight", COLOR_RED)
+                    
                 elseif desc.Name == "GiggleCeiling" then
-                    if not desc:FindFirstChild("GiggleRedHighlight") then
-                        local highlight = Instance.new("Highlight")
-                        highlight.Name = "GiggleRedHighlight"
-                        highlight.FillColor = COLOR_RED
-                        highlight.FillTransparency = 0.5
-                        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                        highlight.Parent = desc
-                    end
+                    ensureHighlight(desc, "GiggleRedHighlight", COLOR_RED)
+                    
                 elseif desc.Name == "HelpfulLight" then
                     local validPart = getPrimaryPartOrFallback(desc)
                     if validPart and not trackedHelpfulLights[validPart] then
@@ -240,22 +291,30 @@ task.spawn(function()
                         weld.Part0 = sphere
                         weld.Part1 = validPart
                         weld.Parent = sphere
-                        local highlight = Instance.new("Highlight")
-                        highlight.FillColor = sphere.Color
-                        highlight.FillTransparency = 0.5
-                        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                        highlight.Parent = sphere
+                        ensureHighlight(sphere, "SphereHighlight", sphere.Color)
                         sphere.Parent = Workspace
                         trackedHelpfulLights[validPart] = sphere
                     end
+                    
                 elseif desc.Name == "LiveHintBook" then
                     local basePart = desc:FindFirstChild("Base") or getPrimaryPartOrFallback(desc)
-                    if basePart and basePart:IsA("BasePart") then table.insert(currentBooks, basePart) end
+                    if basePart and basePart:IsA("BasePart") then 
+                        table.insert(currentBooks, basePart) 
+                        ensureHighlight(basePart, "Book_ESP_Highlight", COLOR_BLUE)
+                    end
                 elseif desc.Name == "Base" and desc.Parent and desc.Parent.Name == "LiveHintBook" and desc:IsA("BasePart") then
-                    if not table.find(currentBooks, desc) then table.insert(currentBooks, desc) end
+                    if not table.find(currentBooks, desc) then 
+                        table.insert(currentBooks, desc) 
+                        ensureHighlight(desc, "Book_ESP_Highlight", COLOR_BLUE)
+                    end
+                    
                 elseif desc.Name == "LibraryHintPaper" then
                     local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then table.insert(currentPapers, validPart) end
+                    if validPart then 
+                        table.insert(currentPapers, validPart) 
+                        ensureHighlight(validPart, "Paper_ESP_Highlight", COLOR_BLUE)
+                    end
+                    
                 elseif desc.Name == "FigureRig" and desc:IsA("Model") then
                     local pPart = getPrimaryPartOrFallback(desc)
                     if pPart then table.insert(currentEnemies, {Part = pPart, Name = "FIGURE", Inst = desc}) end
@@ -294,14 +353,8 @@ task.spawn(function()
                 end
             end
 
-            if enemy.Inst and not enemy.Inst:FindFirstChild("EnemyESP_Highlight") then
-                local highlight = Instance.new("Highlight")
-                highlight.Name = "EnemyESP_Highlight"
-                highlight.FillColor = COLOR_RED
-                highlight.FillTransparency = 0.5 
-                highlight.OutlineColor = Color3.fromRGB(255, 255, 255) 
-                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop 
-                highlight.Parent = enemy.Inst
+            if enemy.Inst then
+                ensureHighlight(enemy.Inst, "EnemyESP_Highlight", COLOR_RED)
             end
         end
         
@@ -319,7 +372,6 @@ task.spawn(function()
     end
 end)
 
--- เรนเดอร์ตัวอักษรโปร่งใส (ทุกเฟรม)
 RunService.RenderStepped:Connect(function()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -367,7 +419,6 @@ RunService.RenderStepped:Connect(function()
         end
     end
     
-    -- ประตู
     if currentDoorTarget and currentDoorTarget.Parent then
         local targetPos = currentDoorTarget.Position
         local vector, onScreen = Camera:WorldToViewportPoint(targetPos)
@@ -379,19 +430,15 @@ RunService.RenderStepped:Connect(function()
         end
     end
     
-    -- เรนเดอร์ ESP ด้วยฟังก์ชันย่อ
     renderESP(activeKeys, cache.Keys, COLOR_GREEN, " KEY ")
     renderESP(activeMinesGens, cache.MinesGens, COLOR_YELLOW, " MINES GENERATOR ")
     renderESP(activeFuses, cache.Fuses, COLOR_GREEN, " FUSE ")
     renderESP(activeLevers, cache.Levers, COLOR_GREEN, " LEVER ")
     renderESP(activeBooks, cache.Books, COLOR_BLUE, " BOOK ")
     renderESP(activePapers, cache.Papers, COLOR_BLUE, " HINT PAPER ")
-    
-    -- [เพิ่มใหม่] เรนเดอร์ห้อง 100
     renderESP(activeBreakers, cache.Breakers, COLOR_GREEN, " BREAKER ")
     renderESP(activeElecKeys, cache.ElecKeys, COLOR_GREEN, " ELECTRICAL KEY ")
     
-    -- ศัตรู (ต่างจากไอเทมนิดหน่อยตรงที่ต้องดึงชื่อเป้าหมายมาโชว์)
     for idx, enemyData in ipairs(activeEnemies) do
         local enemyPart = enemyData.Part
         if enemyPart and enemyPart.Parent then
