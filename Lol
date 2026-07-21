@@ -179,7 +179,7 @@ task.spawn(function()
         end
         
         for _, room in ipairs(CurrentRooms:GetChildren()) do
-            -- ตรวจจับ MinesAnchor และ Grumbles ในห้อง 50 หรือที่มี _NestHandler
+            -- [ ส่วนของใหม่ ] ตรวจจับ MinesAnchor และ Grumbles ในห้อง 50 หรือที่มี _NestHandler
             local nestHandler = room:FindFirstChild("_NestHandler")
             if nestHandler then
                 -- 1. MinesAnchor (ไฮไลท์อย่างเดียว ไม่ขึ้นข้อความ)
@@ -188,7 +188,7 @@ task.spawn(function()
                     ensureHighlight(anchor, "Anchor_ESP_Highlight", COLOR_BLUE)
                 end
                 
-                -- 2. Grumbles (ศัตรู ไฮไลท์สีแดง + แสดงระยะ)
+                -- 2. Grumbles (ศัตรู ไฮไลท์สีแดง + แสดงระยะทาง)
                 local grumblesFolder = nestHandler:FindFirstChild("Grumbles")
                 if grumblesFolder then
                     for _, grumble in ipairs(grumblesFolder:GetChildren()) do
