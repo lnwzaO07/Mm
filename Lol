@@ -32,10 +32,11 @@ local function setupPlayerMods(char)
             return
         end
 
-        -- ตรวจสอบว่าเจอ SeekMovingNewClone ใน Workspace หรือไม่
-        local isSeekPresent = Workspace:FindFirstChild("SeekMovingNewClone") ~= nil
+        -- ตรวจสอบว่า SeekMovingNewClone มีตัวตนอยู่ใน Workspace หรือไม่
+        local seekInstance = Workspace:FindFirstChild("SeekMovingNewClone")
+        local isSeekPresent = (seekInstance ~= nil and seekInstance.Parent ~= nil)
         
-        -- ถ้าเจอ Seek วิ่ง 25, ถ้าไม่เจอวิ่งความเร็วปกติ 20
+        -- ถ้าเจอ Seek วิ่ง 25 / ถ้า Seek หายไป จะกลับมาเป็น 20 ทันที
         local currentSpeed = isSeekPresent and 25 or 20
 
         -- 1. ยิงเลเซอร์ตรวจหาพื้นด้านล่าง (ระยะ 50 studs)
