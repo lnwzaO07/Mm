@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local PathfindingService = game:GetService("PathfindingService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
@@ -6,9 +7,6 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 local CurrentRooms = Workspace:WaitForChild("CurrentRooms")
 
--- ====================================================================
--- ระบบที่ 1: Player Modifiers (กันตกยิง Ray -15 + สลับวิ่งเร็ว 20 / 25)
--- ====================================================================
 local function setupPlayerMods(char)
     local hrp = char:WaitForChild("HumanoidRootPart", 5)
     local humanoid = char:WaitForChild("Humanoid", 5)
@@ -31,31 +29,31 @@ local function setupPlayerMods(char)
             return
         end
 
-        local seekInstance = Workspace:FindFirstChild("SeekMovingNewClone")
+        local seekInstance = Workspace:FindFirstChild("SeekMovingNewClone") or Workspace:FindFirstChild("SeekMoving")
         local isSeekPresent = (seekInstance ~= nil and seekInstance.Parent ~= nil)
-        local currentSpeed = isSeekPresent and 25 or 20
 
-        -- แก้ไข: ยิง Ray ลงล่างแค่ 15 studs ตามที่ต้องการ
-        local downRay = Workspace:Raycast(hrp.Position, Vector3.new(0, -15, 0), raycastParams)
-        local targetVel = humanoid.MoveDirection * currentSpeed
-
-        if not downRay then
-            -- ถ้าไม่มีพื้นในระยะ -15 studs (กำลังจะตก/ตกขอบ)
-            local yVel = 0
-            if humanoid.MoveDirection.Magnitude > 0 then
-                local wallRay = Workspace:Raycast(hrp.Position, humanoid.MoveDirection * 3, raycastParams)
-                if wallRay then
-                    yVel = currentSpeed -- ไต่ขึ้นเมื่อชนกำแพง/ขอบ
+        if isSeekPresent then
+            local downRay = Workspace:Raycast(hrp.Position, Vector3.new(0, -15, 0), raycastParams)
+            if not downRay then
+                local yVel = 0
+                if humanoid.MoveDirection.Magnitude > 0 then
+                    local wallRay = Workspace:Raycast(hrp.Position, humanoid.MoveDirection * 3, raycastParams)
+                    if wallRay then
+                        yVel = humanoid.WalkSpeed
+                    end
                 end
+                local targetVel = humanoid.MoveDirection * humanoid.WalkSpeed
+                moveBv.MaxForce = Vector3.new(100000, 100000, 100000)
+                moveBv.Velocity = Vector3.new(targetVel.X, yVel, targetVel.Z)
+            else
+                moveBv.MaxForce = Vector3.new(0, 0, 0)
+                moveBv.Velocity = Vector3.new(0, 0, 0)
             end
-            -- ล็อคพยุงตัวไม่ให้ตก
-            moveBv.MaxForce = Vector3.new(100000, 100000, 100000)
-            moveBv.Velocity = Vector3.new(targetVel.X, yVel, targetVel.Z)
         else
-            -- ถ้ามีพื้นปกติ ปิดการพยุงตัว
+            local currentSpeed = 20
             if humanoid.MoveDirection.Magnitude > 0 then
                 moveBv.MaxForce = Vector3.new(100000, 0, 100000)
-                moveBv.Velocity = targetVel
+                moveBv.Velocity = humanoid.MoveDirection * currentSpeed
             else
                 moveBv.MaxForce = Vector3.new(0, 0, 0)
                 moveBv.Velocity = Vector3.new(0, 0, 0)
@@ -69,19 +67,15 @@ if LocalPlayer.Character then
 end
 LocalPlayer.CharacterAdded:Connect(setupPlayerMods)
 
-
--- ====================================================================
--- ระบบที่ 2: DOORS ESP & Alert System (ไฮไลท์ + ข้อความครบ 100%)
--- ====================================================================
-local COLOR_YELLOW = Color3.fromRGB(255, 255, 0)   
-local COLOR_GREEN  = Color3.fromRGB(0, 255, 100)   
-local COLOR_BLUE   = Color3.fromRGB(0, 200, 255)   
-local COLOR_RED    = Color3.fromRGB(255, 0, 50)    
-local FONT_STYLE   = 3                             
-local FONT_SIZE    = 14                            
+local COLOR_YELLOW = Color3.fromRGB(255, 255, 0)
+local COLOR_GREEN  = Color3.fromRGB(0, 255, 100)
+local COLOR_BLUE   = Color3.fromRGB(0, 200, 255)
+local COLOR_RED    = Color3.fromRGB(255, 0, 50)
+local FONT_STYLE   = 3
+local FONT_SIZE    = 14
 
 local currentDoorTarget = nil
-local latestRoomNum = -1       
+local latestRoomNum = -1
 
 local activeItems = {}
 local trackedHelpfulLights = {}
@@ -141,7 +135,6 @@ local function ensureHighlight(parentPart, hlName, color)
     end
 end
 
--- สแกนหาไอเทมและศัตรูแบบ Real-time
 task.spawn(function()
     while true do
         local maxRoomNum = -1
@@ -189,64 +182,46 @@ task.spawn(function()
             end
 
             for _, desc in ipairs(room:GetDescendants()) do
+                local validPart = nil
+                local label = nil
+                local color = nil
+                local hlName = nil
+
                 if desc.Name == "KeyHitbox" and desc:IsA("BasePart") then
-                    table.insert(itemsFound, {Part = desc, Color = COLOR_GREEN, Label = " KEY "})
-                    ensureHighlight(desc, "Key_ESP_Highlight", COLOR_GREEN)
-                    
+                    validPart, label, color, hlName = desc, " KEY ", COLOR_GREEN, "Key_ESP_Highlight"
                 elseif desc.Name == "LeverForGate" then
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then 
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_GREEN, Label = " LEVER "})
-                        ensureHighlight(validPart, "Lever_ESP_Highlight", COLOR_GREEN)
-                    end
-                    
-                elseif desc.Name == "FuseObtain" then 
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then 
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_GREEN, Label = " FUSE "})
-                        ensureHighlight(validPart, "Fuse_ESP_Highlight", COLOR_GREEN)
-                    end
-                    
-                elseif desc.Name == "MinesGenerator" then 
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then 
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_YELLOW, Label = " MINES GENERATOR "})
-                        ensureHighlight(validPart, "MinesGen_ESP_Highlight", COLOR_YELLOW)
-                    end
-                
-                elseif desc.Name == "LiveBreakerPolePickup" then 
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then 
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_GREEN, Label = " BREAKER "})
-                        ensureHighlight(validPart, "Breaker_ESP_Highlight", COLOR_GREEN)
-                    end
-                    
-                elseif desc.Name == "ElectricalKeyObtain" then 
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then 
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_GREEN, Label = " ELECTRICAL KEY "})
-                        ensureHighlight(validPart, "ElecKey_ESP_Highlight", COLOR_GREEN)
-                    end
-                
-                elseif desc.Name == "GloomPile" then 
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_RED, Label = " GLOOM "})
-                        ensureHighlight(desc, "GloomRedHighlight", COLOR_RED)
-                    end
-                    
+                    validPart, label, color, hlName = getPrimaryPartOrFallback(desc), " LEVER ", COLOR_GREEN, "Lever_ESP_Highlight"
+                elseif desc.Name == "FuseObtain" then
+                    validPart, label, color, hlName = getPrimaryPartOrFallback(desc), " FUSE ", COLOR_GREEN, "Fuse_ESP_Highlight"
+                elseif desc.Name == "MinesGenerator" then
+                    validPart, label, color, hlName = getPrimaryPartOrFallback(desc), " MINES GENERATOR ", COLOR_YELLOW, "MinesGen_ESP_Highlight"
+                elseif desc.Name == "LiveBreakerPolePickup" then
+                    validPart, label, color, hlName = getPrimaryPartOrFallback(desc), " BREAKER ", COLOR_GREEN, "Breaker_ESP_Highlight"
+                elseif desc.Name == "ElectricalKeyObtain" then
+                    validPart, label, color, hlName = getPrimaryPartOrFallback(desc), " ELECTRICAL KEY ", COLOR_GREEN, "ElecKey_ESP_Highlight"
+                elseif desc.Name == "GloomPile" then
+                    validPart, label, color, hlName = getPrimaryPartOrFallback(desc), " GLOOM ", COLOR_RED, "GloomRedHighlight"
                 elseif desc.Name == "GiggleCeiling" then
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_RED, Label = " GIGGLE "})
-                        ensureHighlight(desc, "GiggleRedHighlight", COLOR_RED)
+                    validPart, label, color, hlName = getPrimaryPartOrFallback(desc), " GIGGLE ", COLOR_RED, "GiggleRedHighlight"
+                elseif desc.Name == "LiveHintBook" or (desc.Name == "Base" and desc.Parent and desc.Parent.Name == "LiveHintBook") then
+                    local p = getPrimaryPartOrFallback(desc)
+                    if p and p:IsA("BasePart") then
+                        validPart, label, color, hlName = p, " BOOK ", COLOR_BLUE, "Book_ESP_Highlight"
                     end
-                    
+                elseif desc.Name == "LibraryHintPaper" then
+                    validPart, label, color, hlName = getPrimaryPartOrFallback(desc), " HINT PAPER ", COLOR_BLUE, "Paper_ESP_Highlight"
+                elseif desc.Name == "Snare" then
+                    ensureHighlight(desc, "Snare_ESP_Highlight", COLOR_RED)
+                elseif desc.Name == "FigureRig" and desc:IsA("Model") then
+                    local pPart = getPrimaryPartOrFallback(desc)
+                    if pPart then
+                        table.insert(itemsFound, {Part = pPart, Color = COLOR_RED, Label = "FIGURE", Inst = desc})
+                    end
                 elseif desc.Name == "HelpfulLight" then
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_BLUE, Label = " HELPFUL LIGHT "})
-                        if not trackedHelpfulLights[validPart] then
+                    local pPart = getPrimaryPartOrFallback(desc)
+                    if pPart then
+                        table.insert(itemsFound, {Part = pPart, Color = COLOR_BLUE, Label = " HELPFUL LIGHT "})
+                        if not trackedHelpfulLights[pPart] then
                             local sphere = Instance.new("Part")
                             sphere.Name = "LightTrackerSphere"
                             sphere.Shape = Enum.PartType.Ball
@@ -256,40 +231,25 @@ task.spawn(function()
                             sphere.CanCollide = false
                             sphere.Massless = true
                             sphere.Anchored = false
-                            sphere.CFrame = validPart.CFrame
+                            sphere.CFrame = pPart.CFrame
                             local weld = Instance.new("WeldConstraint")
                             weld.Part0 = sphere
-                            weld.Part1 = validPart
+                            weld.Part1 = pPart
                             weld.Parent = sphere
                             ensureHighlight(sphere, "SphereHighlight", sphere.Color)
                             sphere.Parent = Workspace
-                            trackedHelpfulLights[validPart] = sphere
+                            trackedHelpfulLights[pPart] = sphere
                         end
                     end
-                    
-                elseif desc.Name == "LiveHintBook" or (desc.Name == "Base" and desc.Parent and desc.Parent.Name == "LiveHintBook") then
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart and validPart:IsA("BasePart") then 
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_BLUE, Label = " BOOK "})
-                        ensureHighlight(validPart, "Book_ESP_Highlight", COLOR_BLUE)
-                    end
-                    
-                elseif desc.Name == "LibraryHintPaper" then
-                    local validPart = getPrimaryPartOrFallback(desc)
-                    if validPart then 
-                        table.insert(itemsFound, {Part = validPart, Color = COLOR_BLUE, Label = " HINT PAPER "})
-                        ensureHighlight(validPart, "Paper_ESP_Highlight", COLOR_BLUE)
-                    end
-                    
-                elseif desc.Name == "FigureRig" and desc:IsA("Model") then
-                    local pPart = getPrimaryPartOrFallback(desc)
-                    if pPart then 
-                        table.insert(itemsFound, {Part = pPart, Color = COLOR_RED, Label = "FIGURE", Inst = desc}) 
-                    end
+                end
+
+                if validPart then
+                    table.insert(itemsFound, {Part = validPart, Color = color, Label = label})
+                    ensureHighlight(validPart, hlName, color)
                 end
             end
         end
-        
+
         local eyes = Workspace:FindFirstChild("Eyes")
         if eyes then
             local pPart = getPrimaryPartOrFallback(eyes)
@@ -323,11 +283,10 @@ task.spawn(function()
         end
         
         activeItems = itemsFound
-        task.wait(0.3)
+        task.wait(0.5)
     end
 end)
 
--- วาดข้อความ ESP ลงหน้าจอ
 RunService.RenderStepped:Connect(function()
     for _, textObj in pairs(textCache) do
         textObj.Visible = false
@@ -381,5 +340,135 @@ RunService.RenderStepped:Connect(function()
                 drawIdx = drawIdx + 1
             end
         end
+    end
+end)
+
+local pathLastPosXZ, pathLastY
+local pathComputing = false
+local pathRaycastParams = RaycastParams.new()
+pathRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function getGroundPosition(pos)
+    local char = LocalPlayer.Character
+    if char then
+        local ignoreList = {char}
+        local pathLines = Workspace:FindFirstChild("PathLines")
+        if pathLines then table.insert(ignoreList, pathLines) end
+        pathRaycastParams.FilterDescendantsInstances = ignoreList
+    end
+
+    local ray = Workspace:Raycast(pos + Vector3.new(0, 50, 0), Vector3.new(0, -10000, 0), pathRaycastParams)
+    if ray then
+        return ray.Position + Vector3.new(0, 3, 0)
+    end
+    return pos
+end
+
+local function drawPath(targetDoorPos)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if pathComputing or not hrp or not targetDoorPos then return end
+    pathComputing = true
+
+    local startPos = getGroundPosition(hrp.Position)
+    local endPos = getGroundPosition(targetDoorPos)
+
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 1.2,
+        AgentHeight = 2.5,
+        AgentCanJump = true
+    })
+
+    pcall(function()
+        path:ComputeAsync(startPos, endPos)
+    end)
+
+    local points = {}
+    if path.Status == Enum.PathStatus.Success then
+        points = path:GetWaypoints()
+    else
+        points = {
+            {Position = hrp.Position},
+            {Position = targetDoorPos}
+        }
+    end
+
+    if Workspace:FindFirstChild("PathLines") then
+        Workspace.PathLines:Destroy()
+    end
+
+    local folder = Instance.new("Folder")
+    folder.Name = "PathLines"
+    folder.Parent = Workspace
+
+    local currentY = hrp.Position.Y
+
+    for i = 1, #points - 1 do
+        local rawA = points[i].Position
+        local rawB = points[i + 1].Position
+
+        local a = Vector3.new(rawA.X, currentY, rawA.Z)
+        local b = Vector3.new(rawB.X, currentY, rawB.Z)
+
+        local distance = (a - b).Magnitude
+        if distance > 0.1 then
+            local line = Instance.new("Part")
+            line.Anchored = true
+            line.CanCollide = false
+            line.Material = Enum.Material.Neon
+            line.Color = Color3.fromRGB(0, 255, 255)
+            line.Size = Vector3.new(0.5, 0.5, distance)
+            line.CFrame = CFrame.new(a, b) * CFrame.new(0, 0, -distance / 2)
+            line.Parent = folder
+        end
+    end
+
+    pathComputing = false
+end
+
+local function updateLinesHeight()
+    local folder = Workspace:FindFirstChild("PathLines")
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not folder or not hrp then return end
+    
+    local currentY = hrp.Position.Y
+    for _, line in ipairs(folder:GetChildren()) do
+        if line:IsA("BasePart") then
+            local cf = line.CFrame
+            line.CFrame = CFrame.new(cf.Position.X, currentY, cf.Position.Z) * (cf - cf.Position)
+        end
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    
+    local seekInstance = Workspace:FindFirstChild("SeekMovingNewClone") or Workspace:FindFirstChild("SeekMoving")
+    local isSeekPresent = (seekInstance ~= nil and seekInstance.Parent ~= nil)
+
+    if not isSeekPresent or not hrp or not currentDoorTarget then
+        if Workspace:FindFirstChild("PathLines") then
+            Workspace.PathLines:Destroy()
+        end
+        pathLastPosXZ = nil
+        pathLastY = nil
+        return
+    end
+
+    local targetDoorPos = currentDoorTarget.Position
+    local currentPosXZ = Vector3.new(hrp.Position.X, 0, hrp.Position.Z)
+    local currentY = hrp.Position.Y
+
+    if not pathLastPosXZ or (currentPosXZ - pathLastPosXZ).Magnitude >= 2.5 then
+        pathLastPosXZ = currentPosXZ
+        pathLastY = currentY
+        task.spawn(function()
+            drawPath(targetDoorPos)
+        end)
+    elseif pathLastY and math.abs(currentY - pathLastY) > 0.4 then
+        pathLastY = currentY
+        updateLinesHeight()
     end
 end)
